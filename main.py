@@ -493,7 +493,14 @@ def get_one_fund_by_user(fund_id: int, user_id: int, current_user: int = Depends
     cursor = conn.cursor()
    
     try:
-        cursor.execute('SELECT id, name_fund, members, description, logo, created_at FROM algo_funds WHERE user_id = %s AND id = %s AND deleted_at IS NULL', (user_id, fund_id,))
+        cursor.execute('''
+            SELECT f.id, f.name_fund, f.members, f.description, f.logo, f.created_at,
+                   u.username, u.email
+            FROM algo_funds f
+            LEFT JOIN algo_users u ON f.user_id = u.id
+            WHERE f.user_id = %s AND f.id = %s AND f.deleted_at IS NULL
+        ''', (user_id, fund_id,))
+        
         fund = cursor.fetchone()
         if not fund:
             raise HTTPException(status_code=404, detail="Fund not found")
@@ -504,7 +511,9 @@ def get_one_fund_by_user(fund_id: int, user_id: int, current_user: int = Depends
             "members": fund[2],
             "description": fund[3],
             "logo": fund[4],
-            "created_at": fund[5].strftime('%Y-%m-%d %H:%M:%S')
+            "created_at": fund[5].strftime('%Y-%m-%d %H:%M:%S'),
+            "username": fund[6],
+            "email": fund[7]
         }
 
         return JSONResponse(status_code=200, content={"statusCode": 200, "body": fund_info })
@@ -515,6 +524,7 @@ def get_one_fund_by_user(fund_id: int, user_id: int, current_user: int = Depends
     finally:
         cursor.close()
         conn.close()
+
 
 
 #PROJECT APIS
@@ -788,6 +798,7 @@ def get_project(project_id: int):
             LEFT JOIN algo_funds f ON p.fund_id = f.id
             WHERE p.id = %s AND p.deleted_at IS NULL;
         ''', (project_id,))
+        
         project = cursor.fetchone()
 
         if project is None:
@@ -813,14 +824,37 @@ def get_project(project_id: int):
             "deleted_at": project[14].strftime('%Y-%m-%d %H:%M:%S') if project[14] else None,
             "fund_name": project[17],
             "fund_logo": project[18],
-            "fund_description": project[19]
+            "fund_description": project[19],
+            "receivers": []  
         }
+
+        cursor.execute('''
+            SELECT email, sodienthoai, address, name, type_receiver_wallet, receiver_wallet_address
+            FROM algo_receivers
+            WHERE project_id = %s;
+        ''', (project_id,))
+        
+        receivers = cursor.fetchall()
+
+        for receiver in receivers:
+            project_data["receivers"].append({
+                "email": receiver[0],
+                "phone": receiver[1],
+                "address": receiver[2],
+                "name": receiver[3],
+                "type_receiver_wallet": receiver[4],
+                "receiver_wallet_address": receiver[5]
+            })
+
         return JSONResponse(status_code=200, content={"statusCode": 200, "body": project_data})
+    
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+    
     finally:
         cursor.close()
         conn.close()
+
 
 @app.get("/projects", response_model=List[ProjectResponse])
 def get_projects():
