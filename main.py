@@ -441,6 +441,7 @@ def update_fund(fund_id: int, update_fund_request: CreateFundRequest, user_id: i
         cursor.close()
         conn.close()
 
+# FIX API
 @app.get("/funds/user/{user_id}")
 def get_funds_by_user(user_id: int, current_user: int = Depends(get_current_user)):
     if user_id != current_user:
@@ -455,7 +456,7 @@ def get_funds_by_user(user_id: int, current_user: int = Depends(get_current_user
             SELECT f.id, f.name_fund, f.description, f.logo, f.created_at, 
                    u.id AS user_id, u.name AS user_name
             FROM algo_funds f
-            LEFT JOIN algo_users u ON u.id = ANY(f.members)
+            LEFT JOIN algo_users u ON u.id::text = ANY(f.members)
             WHERE f.user_id = %s AND f.deleted_at IS NULL
         ''', (user_id,))
         
@@ -471,10 +472,10 @@ def get_funds_by_user(user_id: int, current_user: int = Depends(get_current_user
                 fund_info = {
                     "id": fund_id,
                     "name_fund": fund[1],
-                    "members": [],  # Khởi tạo danh sách thành viên
                     "description": fund[2],
                     "logo": fund[3],
-                    "created_at": fund[4].strftime('%Y-%m-%d %H:%M:%S')
+                    "created_at": fund[4].strftime('%Y-%m-%d %H:%M:%S'),
+                    "members": []  # Khởi tạo danh sách thành viên
                 }
                 funds_list.append(fund_info)
             
@@ -509,11 +510,11 @@ def get_one_fund_by_user(fund_id: int, user_id: int, current_user: int = Depends
             raise HTTPException(status_code=404, detail="Fund not found")
 
         fund_info = {
-    "id": fund[0],
+            "id": fund[0],
             "name_fund": fund[1],
-            "description": fund[2],
-            "logo": fund[3],
-            "members": fund[4],
+            "members": fund[2],
+            "description": fund[3],
+            "logo": fund[4],
             "created_at": fund[5].strftime('%Y-%m-%d %H:%M:%S')
         }
 
@@ -621,11 +622,13 @@ def create_project(project_request: CreateProjectRequest, current_user: dict = D
         conn.close()
 
 class Contribution(BaseModel):
+    project_id: int
+    txid: str # ma giao dich
     amount: float
-    email: str
-    sodienthoai: str
-    address: str
-    name: str
+    email: Optional[str] = None
+    sodienthoai: Optional[str] = None
+    address: Optional[str] = None
+    name: Optional[str] = None
     type_sender_wallet: str
     sender_wallet_address: str
     receiver_wallet_addres: str
@@ -634,6 +637,7 @@ class Contribution(BaseModel):
 # Pydantic model for the contribution response
 class ContributionResponse(BaseModel):
     project_id: int
+    txid: str
     amount: float
     email: str
     sodienthoai: str
@@ -660,10 +664,10 @@ def insert_contribution(
 
     try:
         cursor.execute('''
-            INSERT INTO algo_contributions (project_id, amount, email, sodienthoai, address, name, type_sender_wallet, sender_wallet_address, receiver_wallet_addres, time_round)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO algo_contributions (project_id, txid, amount, email, sodienthoai, address, name, type_sender_wallet, sender_wallet_address, receiver_wallet_addres, time_round)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id;  -- Return the new contribution ID
-        ''', (project_id, contribution.amount, contribution.email, contribution.sodienthoai, contribution.address, contribution.name, contribution.type_sender_wallet, contribution.sender_wallet_address, contribution.receiver_wallet_addres, contribution.time_round))
+        ''', (project_id, contribution.txid, contribution.amount, contribution.email, contribution.sodienthoai, contribution.address, contribution.name, contribution.type_sender_wallet, contribution.sender_wallet_address, contribution.receiver_wallet_addres, contribution.time_round))
 
         contribution_id = cursor.fetchone()[0]
 
@@ -679,7 +683,9 @@ def insert_contribution(
         conn.commit()
         
         response_ = {
+            "contribution_id": contribution_id,
             "project_id": project_id,
+            "txid": contribution.txid,
             "amount": contribution.amount,
             "email": contribution.email,
             "sodienthoai": contribution.sodienthoai,
