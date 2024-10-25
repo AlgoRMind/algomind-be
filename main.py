@@ -41,7 +41,6 @@ conn = get_db_connection()
 PROXY_PREFIX = os.getenv("PROXY_PREFIX", "/api")
 app = FastAPI(root_path=PROXY_PREFIX)
 
-API_KEY = os.getenv("API_KEY")
 
 
 class ModelKWArgs(BaseModel):
@@ -51,8 +50,6 @@ class ModelKWArgs(BaseModel):
         "top_p": 0.9,
     }
 
-
-MODEL = os.getenv("MODEL", "anthropic.claude-3-haiku-20240307-v1:0")
 
 origins = [
     "*",
@@ -71,13 +68,8 @@ app.include_router(algorand_router)
 session_manager = ChatSessionManager(conn=conn)
 
 
-MODEL = os.getenv("MODEL", "gemini-1.5-flash")
 API_TOKEN = os.environ["API_TOKEN"]
 
-chat_model = ChatGoogleGenerativeAI(
-    model=MODEL,
-    api_key=API_KEY,
-)
 # USERS API
 class SignInRequest(BaseModel):
     email: str
@@ -451,10 +443,9 @@ def get_funds_by_user(user_id: int, current_user: int = Depends(get_current_user
     cursor = conn.cursor()
 
     try:
-        # Truy vấn để lấy thông tin quỹ và thông tin thành viên
         cursor.execute('''
             SELECT f.id, f.name_fund, f.description, f.logo, f.created_at, 
-                   u.id AS user_id, u.name AS user_name
+                   u.id AS user_id, u.username AS user_name  -- Use 'username' instead of 'name'
             FROM algo_funds f
             LEFT JOIN algo_users u ON u.id::text = ANY(f.members)
             WHERE f.user_id = %s AND f.deleted_at IS NULL
@@ -462,11 +453,9 @@ def get_funds_by_user(user_id: int, current_user: int = Depends(get_current_user
         
         funds = cursor.fetchall()
 
-        # Tạo danh sách quỹ và thông tin thành viên
         funds_list = []
         for fund in funds:
             fund_id = fund[0]
-            # Kiểm tra xem quỹ đã có trong danh sách chưa
             fund_info = next((f for f in funds_list if f["id"] == fund_id), None)
             if not fund_info:
                 fund_info = {
@@ -475,12 +464,11 @@ def get_funds_by_user(user_id: int, current_user: int = Depends(get_current_user
                     "description": fund[2],
                     "logo": fund[3],
                     "created_at": fund[4].strftime('%Y-%m-%d %H:%M:%S'),
-                    "members": []  # Khởi tạo danh sách thành viên
+                    "members": []
                 }
                 funds_list.append(fund_info)
             
-            # Thêm thông tin thành viên vào quỹ
-            if fund[5] is not None:  # Kiểm tra nếu user_id không phải là NULL
+            if fund[5] is not None:
                 fund_info["members"].append({
                     "user_id": fund[5],
                     "name": fund[6]
@@ -494,6 +482,7 @@ def get_funds_by_user(user_id: int, current_user: int = Depends(get_current_user
     finally:
         cursor.close()
         conn.close()
+
 
 @app.get("/funds/{fund_id}/user/{user_id}")
 def get_one_fund_by_user(fund_id: int, user_id: int, current_user: int = Depends(get_current_user)):
