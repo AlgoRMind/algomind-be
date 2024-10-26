@@ -494,12 +494,12 @@ def get_one_fund_by_user(fund_id: int, user_id: int, current_user: int = Depends
    
     try:
         cursor.execute('''
-            SELECT f.id, f.name_fund, f.members, f.description, f.logo, f.created_at,
+            SELECT f.id, f.name_fund, f.description, f.logo, f.created_at,
                    u.username, u.email
             FROM algo_funds f
             LEFT JOIN algo_users u ON f.user_id = u.id
             WHERE f.user_id = %s AND f.id = %s AND f.deleted_at IS NULL
-        ''', (user_id, fund_id,))
+        ''', (user_id, fund_id))
         
         fund = cursor.fetchone()
         if not fund:
@@ -508,15 +508,30 @@ def get_one_fund_by_user(fund_id: int, user_id: int, current_user: int = Depends
         fund_info = {
             "id": fund[0],
             "name_fund": fund[1],
-            "members": fund[2],
-            "description": fund[3],
-            "logo": fund[4],
-            "created_at": fund[5].strftime('%Y-%m-%d %H:%M:%S'),
-            "username": fund[6],
-            "email": fund[7]
+            "description": fund[2],
+            "logo": fund[3],
+            "created_at": fund[4].strftime('%Y-%m-%d %H:%M:%S'),
+            "username": fund[5],
+            "email": fund[6],
+            "members": []
         }
 
-        return JSONResponse(status_code=200, content={"statusCode": 200, "body": fund_info })
+        cursor.execute('''
+            SELECT u.id, u.username
+            FROM algo_users u
+            WHERE u.id::text = ANY(
+                SELECT UNNEST(f.members) FROM algo_funds f WHERE f.id = %s
+            )
+        ''', (fund_id,))
+
+        members = cursor.fetchall()
+        for member in members:
+            fund_info["members"].append({
+                "user_id": member[0],
+                "name": member[1]
+            })
+
+        return JSONResponse(status_code=200, content={"statusCode": 200, "body": fund_info})
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
@@ -631,6 +646,7 @@ class Contribution(BaseModel):
     type_sender_wallet: str
     sender_wallet_address: str
     receiver_wallet_addres: str
+    current_fund_wallet: float
     time_round: datetime  
 
 # Pydantic model for the contribution response
@@ -663,19 +679,27 @@ def insert_contribution(
 
     try:
         cursor.execute('''
-            INSERT INTO algo_contributions (project_id, txid, amount, email, sodienthoai, address, name, type_sender_wallet, sender_wallet_address, receiver_wallet_addres, time_round)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id;  -- Return the new contribution ID
-        ''', (project_id, contribution.txid, contribution.amount, contribution.email, contribution.sodienthoai, contribution.address, contribution.name, contribution.type_sender_wallet, contribution.sender_wallet_address, contribution.receiver_wallet_addres, contribution.time_round))
+            INSERT INTO algo_contributions (
+                project_id, txid, amount, email, sodienthoai, address, name, 
+                type_sender_wallet, sender_wallet_address, time_round
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id;
+        ''', (
+            project_id, contribution.txid, contribution.amount, contribution.email,
+            contribution.sodienthoai, contribution.address, contribution.name,
+            contribution.type_sender_wallet, contribution.sender_wallet_address,
+            contribution.time_round
+        ))
 
         contribution_id = cursor.fetchone()[0]
 
-    # Update the current_fund of the corresponding project in algo_projects table
         cursor.execute('''
             UPDATE algo_projects
-            SET current_fund = current_fund + %s
+            SET current_fund = current_fund + %s,
                 fund_raise_count = fund_raise_count + 1
-            WHERE id = %s;
+            WHERE id = %s
+            RETURNING current_fund, fund_raise_count;
         ''', (contribution.amount, project_id))
 
         updated_fund, updated_raise_count = cursor.fetchone()
@@ -692,9 +716,8 @@ def insert_contribution(
             "name": contribution.name,
             "type_sender_wallet": contribution.type_sender_wallet,
             "sender_wallet_address": contribution.sender_wallet_address,
-            "receiver_wallet_addres": contribution.receiver_wallet_addres,
-            "time_round" : contribution.time_round,
-            "current_fund": updated_fund,
+            "time_round": contribution.time_round,
+            "current_fund": updated_fund + contribution.current_fund_wallet,
             "fund_raise_count": updated_raise_count
         }
         return JSONResponse(status_code=200, content={"statusCode": 200, "body": response_})
