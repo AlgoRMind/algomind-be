@@ -645,18 +645,10 @@ class Contribution(BaseModel):
     name: Optional[str] = None
     type_sender_wallet: str
     sender_wallet_address: str
-    receiver_wallet_addres: str
+    receiver_wallet_address: str
     current_fund_wallet: float
     time_round: datetime  
 
-
-from typing import Optional, List
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from datetime import datetime
-from fastapi.responses import JSONResponse
-
-app = FastAPI()
 
 class ContributionResponse(BaseModel):
     id: int
@@ -669,9 +661,10 @@ class ContributionResponse(BaseModel):
     name: Optional[str]
     type_sender_wallet: Optional[str]
     sender_wallet_address: Optional[str]
-    time_round: Optional[str]  # Change to string to hold ISO format
-    created_at: Optional[str]   # Change to string to hold ISO format
-    updated_at: Optional[str]   # Change to string to hold ISO format
+    receiver_wallet_address: str
+    time_round: Optional[str]
+    created_at: Optional[str]
+    updated_at: Optional[str]
     project_current_fund: float
     fund_raise_count: int
 
@@ -742,6 +735,19 @@ def insert_contribution(
 
     try:
         cursor.execute('''
+            SELECT receiver_wallet_address
+            FROM algo_receivers
+            WHERE project_id = %s
+            LIMIT 1;  -- Assuming you want one receiver, adjust as needed
+        ''', (project_id,))
+        
+        receiver_wallet_address_row = cursor.fetchone()
+        if not receiver_wallet_address_row:
+            raise HTTPException(status_code=404, detail="Receiver wallet address not found.")
+
+        receiver_wallet_address = receiver_wallet_address_row[0]
+
+        cursor.execute('''
             INSERT INTO algo_contributions (
                 project_id, txid, amount, email, sodienthoai, address, name, 
                 type_sender_wallet, sender_wallet_address, time_round
@@ -769,7 +775,7 @@ def insert_contribution(
         conn.commit()
         
         response_ = {
-            "contribution_id": contribution_id,
+            "id": contribution_id,
             "project_id": project_id,
             "txid": contribution.txid,
             "amount": contribution.amount,
@@ -779,12 +785,13 @@ def insert_contribution(
             "name": contribution.name or "",
             "type_sender_wallet": contribution.type_sender_wallet,
             "sender_wallet_address": contribution.sender_wallet_address,
-            "receiver_wallet_address": contribution.receiver_wallet_addres,
             "time_round": contribution.time_round.strftime('%Y-%m-%d %H:%M:%S'),
-            "project_current_fund": updated_fund + contribution.current_fund_wallet,
-            "fund_raise_count": updated_raise_count
+            "project_current_fund": updated_fund,  # Use updated fund from algo_projects
+            "fund_raise_count": updated_raise_count,
+            "receiver_wallet_address": receiver_wallet_address  # Include in the response
         }
         return JSONResponse(status_code=200, content={"statusCode": 200, "body": response_})
+    
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
