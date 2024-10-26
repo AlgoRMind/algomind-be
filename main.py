@@ -649,21 +649,84 @@ class Contribution(BaseModel):
     current_fund_wallet: float
     time_round: datetime  
 
-# Pydantic model for the contribution response
+
+from typing import Optional, List
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from datetime import datetime
+from fastapi.responses import JSONResponse
+
+app = FastAPI()
+
 class ContributionResponse(BaseModel):
+    id: int
     project_id: int
-    txid: str
+    txid: Optional[str]
     amount: float
-    email: str
-    sodienthoai: str
-    address: str
-    name: str
-    type_sender_wallet: str
-    sender_wallet_address: str
-    receiver_wallet_addres: str
-    time_round: datetime  
+    email: Optional[str]
+    sodienthoai: Optional[str]
+    address: Optional[str]
+    name: Optional[str]
+    type_sender_wallet: Optional[str]
+    sender_wallet_address: Optional[str]
+    time_round: Optional[str]  # Change to string to hold ISO format
+    created_at: Optional[str]   # Change to string to hold ISO format
+    updated_at: Optional[str]   # Change to string to hold ISO format
     project_current_fund: float
     fund_raise_count: int
+
+@app.get("/projects/{project_id}/contributions", response_model=List[ContributionResponse])
+def get_contributions_by_project_id(project_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('''
+            SELECT c.id, c.project_id, c.txid, c.amount, c.email, c.sodienthoai, c.address, c.name,
+                   c.type_sender_wallet, c.sender_wallet_address, c.time_round, 
+                   c.created_at, c.updated_at, p.current_fund, p.fund_raise_count
+            FROM algo_contributions AS c
+            JOIN algo_projects AS p ON c.project_id = p.id
+            WHERE c.project_id = %s;
+        ''', (project_id,))
+
+        contributions = cursor.fetchall()
+
+        if not contributions:
+            raise HTTPException(status_code=404, detail="No contributions found for this project.")
+
+        response = []
+        for contrib in contributions:
+            if len(contrib) < 15:  
+                raise HTTPException(status_code=500, detail=f"Unexpected number of columns returned: {len(contrib)}")
+
+            contribution = ContributionResponse(
+                id=contrib[0],
+                project_id=contrib[1],
+                txid=contrib[2] or "",  
+                amount=contrib[3],
+                email=contrib[4] or "",
+                sodienthoai=contrib[5] or "",
+                address=contrib[6] or "",
+                name=contrib[7] or "",
+                type_sender_wallet=contrib[8] or "",
+                sender_wallet_address=contrib[9] or "",
+                time_round=contrib[10].isoformat() if contrib[10] else None,
+                created_at=contrib[11].isoformat() if contrib[11] else None,
+                updated_at=contrib[12].isoformat() if contrib[12] else None,
+                project_current_fund=contrib[13],
+                fund_raise_count=contrib[14] if len(contrib) > 14 else 0
+            )
+
+            response.append(contribution.dict())
+
+        return JSONResponse(status_code=200, content={"statusCode": 200, "body": response})
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+    finally:
+        cursor.close()
+        conn.close()
 
 @app.post("/projects/{project_id}/contributions", response_model=ContributionResponse)
 def insert_contribution(
@@ -710,14 +773,15 @@ def insert_contribution(
             "project_id": project_id,
             "txid": contribution.txid,
             "amount": contribution.amount,
-            "email": contribution.email,
-            "sodienthoai": contribution.sodienthoai,
-            "address": contribution.address,
-            "name": contribution.name,
+            "email": contribution.email or "",
+            "sodienthoai": contribution.sodienthoai or "",
+            "address": contribution.address or "",
+            "name": contribution.name or "",
             "type_sender_wallet": contribution.type_sender_wallet,
             "sender_wallet_address": contribution.sender_wallet_address,
-            "time_round": contribution.time_round,
-            "current_fund": updated_fund + contribution.current_fund_wallet,
+            "receiver_wallet_address": contribution.receiver_wallet_addres,
+            "time_round": contribution.time_round.strftime('%Y-%m-%d %H:%M:%S'),
+            "project_current_fund": updated_fund + contribution.current_fund_wallet,
             "fund_raise_count": updated_raise_count
         }
         return JSONResponse(status_code=200, content={"statusCode": 200, "body": response_})
@@ -1094,52 +1158,6 @@ class Response(BaseModel):
     sender_wallet_address: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
-
-
-@app.get("/projects/{project_id}/contributions", response_model=List[ContributionResponse])
-def get_contributions_by_project_id(project_id: int):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    try:
-        cursor.execute('''
-            SELECT id, project_id, amount, email, sodienthoai, address, name,
-                   type_sender_wallet, sender_wallet_address, created_at, updated_at
-            FROM algo_contributions
-            WHERE project_id = %s;
-        ''', (project_id,))
-
-        contributions = cursor.fetchall()
-
-        if not contributions:
-            raise HTTPException(status_code=404, detail="No contributions found for this project.")
-
-        response = [
-            contrib.dict()
-            for contrib in [
-                ContributionResponse(
-                    id=contrib[0],
-                    project_id=contrib[1],
-                    amount=contrib[2],
-                    email=contrib[3],
-                    sodienthoai=contrib[4],
-                    address=contrib[5],
-                    name=contrib[6],
-                    type_sender_wallet=contrib[7],
-                    sender_wallet_address=contrib[8],
-                    created_at=contrib[9].isoformat() if contrib[9] else None,
-                    updated_at=contrib[10].isoformat() if contrib[10] else None     
-                )
-                for contrib in contributions
-            ]
-        ]
-        return JSONResponse(status_code=200, content={"statusCode": 200, "body": response})
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
-    finally:
-        cursor.close()
-        conn.close()
 
 # RECEIVERS API
 
